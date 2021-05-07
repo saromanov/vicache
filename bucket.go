@@ -24,6 +24,9 @@ func (b *bucket) new(maxBytes uint64) {
 	maxChunks := (maxBytes + chunkSize - 1) / chunkSize
 	b.chunks = make([][]byte, maxChunks)
 	b.m = make(map[uint64]uint64)
+	b.maxGen = 1024
+	b.gen = 256
+	b.genSizeBits = 128
 }
 
 // Set provides setting data to the bucket
@@ -139,7 +142,18 @@ func (b *bucket) get(dst, k []byte, h uint64, returnDst bool) ([]byte, bool) {
 }
 
 func (b *bucket) clean() {
-
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	bGen := b.gen & ((1 << b.genSizeBits) - 1)
+	bIdx := b.idx
+	for k, v := range b.m {
+		gen := v >> b.bucketSizeBits
+		idx := v & ((1 << b.bucketSizeBits) - 1)
+		if gen == bGen && idx < bIdx || gen+1 == bGen && idx >= bIdx || gen == b.maxGen && bGen == 1 && idx >= bIdx {
+			continue
+		}
+		b.del(k)
+	}
 }
 
 func (b *bucket) del(h uint64) {

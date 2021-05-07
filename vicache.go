@@ -31,12 +31,14 @@ func New(max, bucketsCount uint) (*ViCache, error) {
 	}, nil
 }
 
+// Set provides setting of the key and value
 func (c *ViCache) Set(k, v []byte) {
 	h := xxhash.Sum64(k)
 	idx := h % uint64(c.bucketsCount)
 	c.buckets[idx].set(k, v, h)
 }
 
+// Get provides getting value by the key
 func (c *ViCache) Get(dst, k []byte) []byte {
 	h := xxhash.Sum64(k)
 	idx := h % uint64(c.bucketsCount)

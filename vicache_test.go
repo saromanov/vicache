@@ -13,5 +13,5 @@ func TestCache(t *testing.T) {
 	assert.NoError(t, err)
 	n.Set([]byte("test"), []byte("key"))
 	res := n.Get(nil, []byte("test"))
-	assert.Equal(t, []byte("key"), string(res))
+	assert.Equal(t, "key", string(res))
 }
