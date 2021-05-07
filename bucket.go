@@ -6,12 +6,16 @@ import (
 )
 
 type bucket struct {
-	mu         sync.RWMutex
-	chunks     [][]byte
-	m          map[uint64]uint64
-	idx        uint64
-	callsCount uint64
-	gen        uint64
+	mu             sync.RWMutex
+	chunks         [][]byte
+	m              map[uint64]uint64
+	idx            uint64
+	callsCount     uint64
+	gen            uint64
+	bucketSizeBits uint64
+	genSizeBits    uint64
+	collisions     uint64
+	misses         uint64
 }
 
 // New provides initialization of the new bucket
@@ -25,7 +29,7 @@ func (b *bucket) new(maxBytes uint64) {
 func (b *bucket) set(k, v []byte, h uint64) {
 	setCalls := atomic.AddUint64(&b.callsCount, 1)
 	if setCalls%(1<<14) == 0 {
-		b.Clean()
+		b.clean()
 	}
 
 	isTooBig := func() bool {
@@ -49,7 +53,7 @@ func (b *bucket) set(k, v []byte, h uint64) {
 	}
 
 	b.mu.Lock()
-	idx, idxNew, chunkIdx, _ := b.genChunks()
+	idx, idxNew, chunkIdx, _ := b.genChunks(kvLen)
 	chunk := b.chunks[chunkIdx]
 	if chunk == nil {
 		chunk = getChunk()
@@ -59,13 +63,13 @@ func (b *bucket) set(k, v []byte, h uint64) {
 	chunk = append(chunk, k...)
 	chunk = append(chunk, v...)
 	b.chunks[chunkIdx] = chunk
-	b.m[h] = idx | (b.gen << bucketSizeBits)
+	b.m[h] = idx | (b.gen << b.bucketSizeBits)
 	b.idx = idxNew
 	b.mu.Unlock()
 }
 
 // genChuncs provides generation of chuncs
-func (b *bucket) genChunks()(uint64, uint64, uint64, uint64) {
+func (b *bucket) genChunks(kvLen uint64) (uint64, uint64, uint64, uint64) {
 	idx := b.idx
 	idxNew := idx + kvLen
 	chunkIdx := idx / chunkSize
@@ -75,7 +79,7 @@ func (b *bucket) genChunks()(uint64, uint64, uint64, uint64) {
 		idxNew = kvLen
 		chunkIdx = 0
 		b.gen++
-		if b.gen&((1<<genSizeBits)-1) == 0 {
+		if b.gen&((1<<b.genSizeBits)-1) == 0 {
 			b.gen++
 		}
 	} else {
@@ -85,4 +89,59 @@ func (b *bucket) genChunks()(uint64, uint64, uint64, uint64) {
 	}
 	b.chunks[chunkIdx] = b.chunks[chunkIdx][:0]
 	return idx, idxNew, chunkIdx, chunkIdxNew
+}
+
+func (b *bucket) get(dst, k []byte, h uint64, returnDst bool) ([]byte, bool) {
+	atomic.AddUint64(&b.callsCount, 1)
+	found := false
+	b.mu.RLock()
+	v := b.m[h]
+	bGen := b.gen & ((1 << b.genSizeBits) - 1)
+	if v > 0 {
+		gen := v >> b.bucketSizeBits
+		idx := v & ((1 << b.bucketSizeBits) - 1)
+		if gen == bGen && idx < b.idx || gen+1 == bGen && idx >= b.idx || gen == maxGen && bGen == 1 && idx >= b.idx {
+			chunkIdx := idx / chunkSize
+			if chunkIdx >= uint64(len(b.chunks)) {
+				goto end
+			}
+			chunk := b.chunks[chunkIdx]
+			idx %= chunkSize
+			if idx+4 >= chunkSize {
+				goto end
+			}
+			kvLenBuf := chunk[idx : idx+4]
+			keyLen := (uint64(kvLenBuf[0]) << 8) | uint64(kvLenBuf[1])
+			valLen := (uint64(kvLenBuf[2]) << 8) | uint64(kvLenBuf[3])
+			idx += 4
+			if idx+keyLen+valLen >= chunkSize {
+				goto end
+			}
+			if string(k) == string(chunk[idx:idx+keyLen]) {
+				idx += keyLen
+				if returnDst {
+					dst = append(dst, chunk[idx:idx+valLen]...)
+				}
+				found = true
+			} else {
+				atomic.AddUint64(&b.collisions, 1)
+			}
+		}
+	}
+end:
+	b.mu.RUnlock()
+	if !found {
+		atomic.AddUint64(&b.misses, 1)
+	}
+	return dst, found
+}
+
+func (b *bucket) clean() {
+
+}
+
+func (b *bucket) del(h uint64) {
+	b.mu.Lock()
+	delete(b.m, h)
+	b.mu.Unlock()
 }
