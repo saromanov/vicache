@@ -53,5 +53,5 @@ func (c *ViCache) Get(dst, k []byte) []byte {
 func (c *ViCache) Del(k []byte){
 	h := xxhash.Sum64(k)
 	idx := h % uint64(c.bucketsCount)
-	c.buckets[idx].del(idx)
+	c.buckets[idx].del(h)
 }

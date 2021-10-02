@@ -14,4 +14,7 @@ func TestCache(t *testing.T) {
 	n.Set([]byte("test"), []byte("key"))
 	res := n.Get(nil, []byte("test"))
 	assert.Equal(t, "key", string(res))
+	n.Del([]byte("test"))
+	res = n.Get(nil, []byte("test"))
+	assert.Empty(t, res)
 }
