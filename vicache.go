@@ -42,6 +42,16 @@ func (c *ViCache) Set(k, v []byte) {
 func (c *ViCache) Get(dst, k []byte) []byte {
 	h := xxhash.Sum64(k)
 	idx := h % uint64(c.bucketsCount)
-	dst, _ = c.buckets[idx].get(dst, k, h, true)
+	dst, ok := c.buckets[idx].get(dst, k, h, true)
+	if !ok {
+		return nil
+	}
 	return dst
+}
+
+// Del provides deleting of the data
+func (c *ViCache) Del(k []byte){
+	h := xxhash.Sum64(k)
+	idx := h % uint64(c.bucketsCount)
+	c.buckets[idx].del(idx)
 }
